@@ -91,7 +91,7 @@ open class XWalkReflection : NSObject {
     }
 
     // Fetching selectors
-    open var constructor: Selector {
+    open var constructor: Selector? {
         return method_getName(ctor)
     }
     open func getMethod(_ name: String) -> Selector {
