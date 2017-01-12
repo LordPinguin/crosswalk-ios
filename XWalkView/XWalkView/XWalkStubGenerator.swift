@@ -14,17 +14,16 @@ class XWalkStubGenerator {
         mirror = reflection
     }
 
-    func generate(channelName: String, namespace: String, object: AnyObject? = nil) -> String {
+    func generate(_ channelName: String, namespace: String, object: AnyObject? = nil) -> String {
         var stub = "(function(exports) {\n"
         for name in mirror.allMembers {
             if mirror.hasMethod(name) {
                 stub += "exports.\(name) = \(generateMethodStub(name))\n"
             } else {
                 var value = "undefined"
-                if object != nil {
+                if object != nil, let result = XWalkInvocation.call(object, selector: mirror.getGetter(name), arguments: nil) {
                     // Fetch initial value
-                    let result = XWalkInvocation.call(object, selector: mirror.getGetter(name), arguments: nil)
-                    let val: AnyObject = (result.isObject ? result.nonretainedObjectValue : result as? NSNumber) ?? NSNull()
+                    let val: AnyObject = ((result.isObject ? result.nonretainedObjectValue : ((result as? NSNumber) as Any?)) as AnyObject?) ?? NSNull()
                     value = toJSONString(val)
                 }
                 stub += "Extension.defineProperty(exports, '\(name)', \(value), \(!mirror.isReadonly(name)));\n"
@@ -43,9 +42,9 @@ class XWalkStubGenerator {
         return stub
     }
 
-    private func generateMethodStub(name: String, selector: Selector? = nil, this: String = "this") -> String {
-        var params = (selector ?? mirror.getMethod(name)).description.componentsSeparatedByString(":")
-        params.removeAtIndex(0)
+    fileprivate func generateMethodStub(_ name: String, selector: Selector? = nil, this: String = "this") -> String {
+        var params = (selector ?? mirror.getMethod(name)).description.components(separatedBy: ":")
+        params.remove(at: 0)
         params.removeLast()
 
         // deal with parameters without external name
@@ -58,7 +57,7 @@ class XWalkStubGenerator {
         let isPromise = params.last == "_Promise"
         if isPromise { params.removeLast() }
 
-        let list = params.joinWithSeparator(", ")
+        let list = params.joined(separator: ", ")
         var body = "invokeNative('\(name)', [\(list)"
         if isPromise {
             body = "var _this = \(this);\n    return new Promise(function(resolve, reject) {\n        _this.\(body)"
@@ -69,15 +68,15 @@ class XWalkStubGenerator {
         return "function(\(list)) {\n    \(body)\n}"
     }
 
-    private func userDefinedJavaScript() -> String? {
+    fileprivate func userDefinedJavaScript() -> String? {
         var className = NSStringFromClass(self.mirror.cls)
 
         if (className as NSString).pathExtension.characters.count > 0 {
             className = (className as NSString).pathExtension
         }
-        let bundle = NSBundle(forClass: self.mirror.cls)
-        if let path = bundle.pathForResource(className, ofType: "js") {
-            if let content = try? String(contentsOfFile: path, encoding: NSUTF8StringEncoding) {
+        let bundle = Bundle(for: self.mirror.cls)
+        if let path = bundle.path(forResource: className, ofType: "js") {
+            if let content = try? String(contentsOfFile: path, encoding: String.Encoding.utf8) {
                 return content
             }
         }
@@ -93,7 +92,7 @@ private extension NSNumber {
     }
 }
 
-private func toJSONString(object: AnyObject, isPretty: Bool=false) -> String {
+private func toJSONString(_ object: AnyObject, isPretty: Bool=false) -> String {
     switch object {
     case is NSNull:
         return "null"
@@ -108,9 +107,9 @@ private func toJSONString(object: AnyObject, isPretty: Bool=false) -> String {
     case is NSString:
         return "'\(object as! String)'"
     default:
-        if let data = (try? NSJSONSerialization.dataWithJSONObject(object,
-            options: isPretty ? NSJSONWritingOptions.PrettyPrinted : NSJSONWritingOptions(rawValue: 0))) as NSData? {
-                if let string = NSString(data: data, encoding: NSUTF8StringEncoding) {
+        if let data = (try? JSONSerialization.data(withJSONObject: object,
+            options: isPretty ? JSONSerialization.WritingOptions.prettyPrinted : JSONSerialization.WritingOptions(rawValue: 0))) as Data? {
+                if let string = NSString(data: data, encoding: String.Encoding.utf8.rawValue) {
                     return string as String
                 }
         }

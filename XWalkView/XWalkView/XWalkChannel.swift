@@ -5,15 +5,15 @@
 import Foundation
 import WebKit
 
-public class XWalkChannel : NSObject, WKScriptMessageHandler {
-    public let name: String
-    public var mirror: XWalkReflection!
-    public var namespace: String = ""
-    public weak var webView: XWalkView?
-    public weak var thread: NSThread?
+open class XWalkChannel : NSObject, WKScriptMessageHandler {
+    open let name: String
+    open var mirror: XWalkReflection!
+    open var namespace: String = ""
+    open weak var webView: XWalkView?
+    open weak var thread: Thread?
 
-    private var instances: [Int: AnyObject] = [:]
-    private var userScript: WKUserScript?
+    fileprivate var instances: [Int: AnyObject] = [:]
+    fileprivate var userScript: WKUserScript?
 
     public init(webView: XWalkView) {
         struct seq{
@@ -21,16 +21,17 @@ public class XWalkChannel : NSObject, WKScriptMessageHandler {
         }
 
         self.webView = webView
-        self.name = "\(++seq.num)"
+        seq.num += 1
+        self.name = "\(seq.num)"
         super.init()
-        webView.configuration.userContentController.addScriptMessageHandler(self, name: "\(self.name)")
+        webView.configuration.userContentController.add(self, name: "\(self.name)")
     }
 
-    public func bind(object: AnyObject, namespace: String, thread: NSThread?) {
+    open func bind(_ object: AnyObject, namespace: String, thread: Thread?) {
         self.namespace = namespace
-        self.thread = thread ?? NSThread.mainThread()
+        self.thread = thread ?? Thread.main
 
-        mirror = XWalkReflection(cls: object.dynamicType)
+        mirror = XWalkReflection(cls: type(of: object))
         var script = XWalkStubGenerator(reflection: mirror).generate(name, namespace: namespace, object: object)
         let delegate = object as? XWalkDelegate
         script = delegate?.didGenerateStub?(script) ?? script
@@ -40,37 +41,37 @@ public class XWalkChannel : NSObject, WKScriptMessageHandler {
         instances[0] = object
     }
 
-    public func destroyExtension() {
-        if webView?.URL != nil {
+    open func destroyExtension() {
+        if webView?.url != nil {
             evaluateJavaScript("delete \(namespace);", completionHandler:nil)
         }
-        webView?.configuration.userContentController.removeScriptMessageHandlerForName("\(name)")
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "\(name)")
         if userScript != nil {
             webView?.configuration.userContentController.removeUserScript(userScript!)
         }
         for (_, object) in instances {
             (object as? XWalkDelegate)?.didUnbindExtension?()
         }
-        instances.removeAll(keepCapacity: false)
+        instances.removeAll(keepingCapacity: false)
     }
 
-    public func userContentController(userContentController: WKUserContentController, didReceiveScriptMessage: WKScriptMessage) {
+    open func userContentController(_ userContentController: WKUserContentController, didReceive didReceiveScriptMessage: WKScriptMessage) {
         let body = didReceiveScriptMessage.body as! [String: AnyObject]
-        let instid = (body["instance"] as? NSNumber)?.integerValue ?? 0
-        let callid = body["callid"] as? NSNumber ?? NSNumber(integer: 0)
-        let args = [callid] + (body["arguments"] as? [AnyObject] ?? [])
+        let instid = (body["instance"] as? NSNumber)?.intValue ?? 0
+        let callid = body["callid"] as? NSNumber ?? NSNumber(value: 0 as Int)
+        let args = [(callid as AnyObject)] + (body["arguments"] as? [AnyObject] ?? [])
 
         if let method = body["method"] as? String {
             // Invoke method
             if let object: AnyObject = instances[instid] {
                 let delegate = object as? XWalkDelegate
                 if delegate?.invokeNativeMethod != nil {
-                    let selector = Selector("invokeNativeMethod:arguments:")
-                    XWalkInvocation.asyncCallOnThread(thread, target: object, selector: selector, arguments: [method, args])
+                    let selector = #selector(XWalkDelegate.invokeNativeMethod(_:arguments:))
+                    XWalkInvocation.asyncCall(on: thread, target: object, selector: selector, arguments: [method, args])
                 } else if mirror.hasMethod(method) {
-                    XWalkInvocation.asyncCallOnThread(thread, target: object, selector: mirror.getMethod(method), arguments: args)
+                    XWalkInvocation.asyncCall(on: thread, target: object, selector: mirror.getMethod(method), arguments: args)
                 } else {
-                    print("ERROR: Method '\(method)' is not defined in class '\(object.dynamicType.description())'.")
+                    print("ERROR: Method '\(method)' is not defined in class '\(type(of: object).description())'.")
                 }
             } else {
                 print("ERROR: Instance \(instid) does not exist.")
@@ -81,17 +82,17 @@ public class XWalkChannel : NSObject, WKScriptMessageHandler {
                 let value: AnyObject = body["value"] ?? NSNull()
                 let delegate = object as? XWalkDelegate
                 if delegate?.setNativeProperty != nil {
-                    let selector = Selector("setNativeProperty:value:")
-                    XWalkInvocation.asyncCallOnThread(thread, target: object, selector: selector, arguments: [prop, value])
+                    let selector = #selector(XWalkDelegate.setNativeProperty(_:value:))
+                    XWalkInvocation.asyncCall(on: thread, target: object, selector: selector, arguments: [prop, value])
                 } else if mirror.hasProperty(prop) {
                     let selector = mirror.getSetter(prop)
-                    if selector != Selector() {
-                        XWalkInvocation.asyncCallOnThread(thread, target: object, selector: selector, arguments: [value])
+                    if selector != "" {
+                        XWalkInvocation.asyncCall(on: thread, target: object, selector: selector, arguments: [value])
                     } else {
                         print("ERROR: Property '\(prop)' is readonly.")
                     }
                 } else {
-                    print("ERROR: Property '\(prop)' is not defined in class '\(object.dynamicType.description())'.")
+                    print("ERROR: Property '\(prop)' is not defined in class '\(type(of: object).description())'.")
                 }
             } else {
                 print("ERROR: Instance \(instid) does not exist.")
@@ -99,13 +100,13 @@ public class XWalkChannel : NSObject, WKScriptMessageHandler {
         } else if instid > 0 && instances[instid] == nil {
             // Create instance
             let ctor: AnyObject = instances[0]!
-            let object: AnyObject = XWalkInvocation.constructOnThread(thread, `class`: ctor.dynamicType, initializer: mirror.constructor, arguments: args)
+            let object: AnyObject = XWalkInvocation.construct(on: thread, class: type(of: ctor), initializer: mirror.constructor, arguments: args) as AnyObject
             instances[instid] = object
             (object as? XWalkDelegate)?.didBindExtension?(self, instance: instid)
             // TODO: shoud call releaseArguments
         } else if let object: AnyObject = instances[-instid] {
             // Destroy instance
-            instances.removeValueForKey(-instid)
+            instances.removeValue(forKey: -instid)
             (object as? XWalkDelegate)?.didUnbindExtension?()
         } else if body["destroy"] != nil {
             destroyExtension()
@@ -115,15 +116,15 @@ public class XWalkChannel : NSObject, WKScriptMessageHandler {
         }
     }
 
-    public func evaluateJavaScript(string: String, completionHandler: ((AnyObject?, NSError?)->Void)?) {
+    open func evaluateJavaScript(_ string: String, completionHandler: ((AnyObject?, NSError?)->Void)?) {
         // TODO: Should call completionHandler with an NSError object when webView is nil
-        if NSThread.isMainThread() {
-            webView?.evaluateJavaScript(string, completionHandler: completionHandler)
+        if Thread.isMainThread {
+            webView?.evaluateJavaScript(string, completionHandler: completionHandler as! ((Any?, Error?) -> Void)?)
         } else {
             weak var weakSelf = self
-            dispatch_async(dispatch_get_main_queue()) {
+            DispatchQueue.main.async {
                 if let strongSelf = weakSelf {
-                    strongSelf.webView?.evaluateJavaScript(string, completionHandler: completionHandler)
+                    strongSelf.webView?.evaluateJavaScript(string, completionHandler: completionHandler as! ((Any?, Error?) -> Void)?)
                 }
             }
         }

@@ -4,32 +4,35 @@
 
 import Foundation
 
-public class XWalkThread : NSThread {
-    var timer: NSTimer!
+open class XWalkThread : Thread {
+    var timer: Timer!
 
     deinit {
         cancel()
     }
 
-    override public func main() {
+    override open func main() {
         repeat {
-            switch  CFRunLoopRunInMode(kCFRunLoopDefaultMode, 60, true) {
-                case CFRunLoopRunResult.Finished:
+            switch  CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 60, true) {
+                case CFRunLoopRunResult.finished:
                     // No input source, add a timer (which will never fire) to avoid spinning.
-                    let interval = NSDate.distantFuture().timeIntervalSinceNow
-                    timer = NSTimer(timeInterval: interval, target: self, selector: Selector(), userInfo: nil, repeats: false)
-                    NSRunLoop.currentRunLoop().addTimer(timer, forMode: NSDefaultRunLoopMode)
-                case CFRunLoopRunResult.HandledSource:
+                    let interval = Date.distantFuture.timeIntervalSinceNow
+                    timer = Timer(timeInterval: interval, target: self, selector: #selector(XWalkThread.neverCallIt), userInfo: nil, repeats: false)
+                    RunLoop.current.add(timer, forMode: RunLoopMode.defaultRunLoopMode)
+                case CFRunLoopRunResult.handledSource:
                     // Remove the timer because run loop has had input source
                     if timer != nil {
                         timer.invalidate()
                         timer = nil
                     }
-                case CFRunLoopRunResult.Stopped:
+                case CFRunLoopRunResult.stopped:
                     cancel()
                 default:
                     break
             }
-        } while !cancelled
+        } while !isCancelled
+    }
+    
+    func neverCallIt() {
     }
 }

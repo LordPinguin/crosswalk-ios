@@ -4,14 +4,14 @@
 
 import Foundation
 
-public class XWalkReflection : NSObject {
-    private enum MemberType: UInt {
-        case Method = 1
-        case Getter
-        case Setter
-        case Constructor
+open class XWalkReflection : NSObject {
+    fileprivate enum MemberType: UInt {
+        case method = 1
+        case getter
+        case setter
+        case constructor
     }
-    private struct MemberInfo {
+    fileprivate struct MemberInfo {
         init(cls: AnyClass) {
             self.cls = cls
         }
@@ -25,40 +25,40 @@ public class XWalkReflection : NSObject {
             self.setter = setter
         }
         var cls: AnyClass
-        var method: Method = nil
-        var getter: Method = nil
-        var setter: Method = nil
+        var method: Method? = nil
+        var getter: Method? = nil
+        var setter: Method? = nil
     }
 
-    public let cls: AnyClass
-    private var members: [String: MemberInfo] = [:]
-    private var ctor: Method = nil
+    open let cls: AnyClass
+    fileprivate var members: [String: MemberInfo] = [:]
+    fileprivate var ctor: Method? = nil
 
-    private let methodPrefix = "jsfunc_"
-    private let getterPrefix = "jsprop_"
-    private let setterPrefix = "setJsprop_"
-    private let ctorPrefix = "initFromJavaScript:"
+    fileprivate let methodPrefix = "jsfunc_"
+    fileprivate let getterPrefix = "jsprop_"
+    fileprivate let setterPrefix = "setJsprop_"
+    fileprivate let ctorPrefix = "initFromJavaScript:"
 
     public init(cls: AnyClass) {
         self.cls = cls
         super.init()
         enumerate({(name, type, method, cls) -> Bool in
-            if type == MemberType.Method {
+            if type == MemberType.method {
                 assert(self.members[name] == nil, "ambiguous method: \(name)")
                 self.members[name] = MemberInfo(cls: cls, method: method)
-            } else if type == MemberType.Constructor {
-                assert(self.ctor == Method(), "ambiguous initializer")
+            } else if type == MemberType.constructor {
+                assert(self.ctor == nil, "ambiguous initializer")
                 self.ctor = method
             } else {
                 if self.members[name] == nil {
                     self.members[name] = MemberInfo(cls: cls)
                 } else {
-                    assert(self.members[name]!.method == Method(), "name conflict: \(name)")
+                    assert(self.members[name]!.method == nil, "name conflict: \(name)")
                 }
-                if type == MemberType.Getter {
+                if type == MemberType.getter {
                     self.members[name]!.getter = method
                 } else {
-                    assert(type == MemberType.Setter)
+                    assert(type == MemberType.setter)
                     self.members[name]!.setter = method
                 }
             }
@@ -67,78 +67,80 @@ public class XWalkReflection : NSObject {
     }
 
     // Basic information
-    public var allMembers: [String] {
+    open var allMembers: [String] {
         return members.keys.filter({(e)->Bool in return true})
     }
-    public var allMethods: [String] {
+    open var allMethods: [String] {
         return members.keys.filter({(e)->Bool in return self.hasMethod(e)})
     }
-    public var allProperties: [String] {
+    open var allProperties: [String] {
         return members.keys.filter({(e)->Bool in return self.hasProperty(e)})
     }
-    public func hasMember(name: String) -> Bool {
+    open func hasMember(_ name: String) -> Bool {
         return members[name] != nil
     }
-    public func hasMethod(name: String) -> Bool {
-        return (members[name]?.method ?? Method()) != Method()
+    open func hasMethod(_ name: String) -> Bool {
+        return (members[name]?.method ?? nil) != nil
     }
-    public func hasProperty(name: String) -> Bool {
-        return (members[name]?.getter ?? Method()) != Method()
+    open func hasProperty(_ name: String) -> Bool {
+        return (members[name]?.getter ?? nil) != nil
     }
-    public func isReadonly(name: String) -> Bool {
+    open func isReadonly(_ name: String) -> Bool {
         assert(hasProperty(name))
-        return (members[name]?.setter ?? Method()) == Method()
+        return (members[name]?.setter ?? nil) == nil
     }
 
     // Fetching selectors
-    public var constructor: Selector {
+    open var constructor: Selector {
         return method_getName(ctor)
     }
-    public func getMethod(name: String) -> Selector {
-        return method_getName(members[name]?.method ?? Method())
+    open func getMethod(_ name: String) -> Selector {
+        return method_getName(members[name]?.method ?? nil)
     }
-    public func getGetter(name: String) -> Selector {
-        return method_getName(members[name]?.getter ?? Method())
+    open func getGetter(_ name: String) -> Selector {
+        return method_getName(members[name]?.getter ?? nil)
     }
-    public func getSetter(name: String) -> Selector {
-        return method_getName(members[name]?.setter ?? Method())
+    open func getSetter(_ name: String) -> Selector {
+        return method_getName(members[name]?.setter ?? nil)
     }
 
     // TODO: enumerate instance methods of super class
-    private func enumerate(callback: ((String, MemberType, Method, AnyClass)->Bool)) -> Bool {
+    fileprivate func enumerate(_ callback: ((String, MemberType, Method, AnyClass)->Bool)) -> Bool {
         let methodList = class_copyMethodList(cls, nil);
-        for var mlist = methodList; mlist.memory != nil; mlist = mlist.successor() {
-            let name = method_getName(mlist.memory).description
-            let num = method_getNumberOfArguments(mlist.memory)
+        var mlist = methodList
+        while mlist?.pointee != nil {
+            let name = method_getName(mlist?.pointee).description
+            let num = method_getNumberOfArguments(mlist?.pointee)
             var type: MemberType
             var start: String.Index
             var end: String.Index
             if name.hasPrefix(methodPrefix) && num >= 3 {
-                type = MemberType.Method
-                start = name.startIndex.advancedBy(7)
-                end = start.successor()
+                type = MemberType.method
+                start = name.characters.index(name.startIndex, offsetBy: 7)
+                end = name.characters.index(after: start)
                 while name[end] != Character(":") {
-                    end = end.successor()
+                    end = name.characters.index(after: end)
                 }
             } else if name.hasPrefix(getterPrefix) && num == 2 {
-                type = MemberType.Getter
-                start = name.startIndex.advancedBy(7)
+                type = MemberType.getter
+                start = name.characters.index(name.startIndex, offsetBy: 7)
                 end = name.endIndex
             } else if name.hasPrefix(setterPrefix) && num == 3 {
-                type = MemberType.Setter
-                start = name.startIndex.advancedBy(10)
-                end = name.endIndex.predecessor()
+                type = MemberType.setter
+                start = name.characters.index(name.startIndex, offsetBy: 10)
+                end = name.characters.index(before: name.endIndex)
             } else if name.hasPrefix(ctorPrefix) {
-                type = MemberType.Constructor
+                type = MemberType.constructor
                 start = name.startIndex
-                end = start.advancedBy(4)
+                end = name.characters.index(start, offsetBy: 4)
             } else {
                 continue
             }
-            if !callback(name[start..<end], type, mlist.memory, cls) {
+            if !callback(name[start..<end], type, (mlist?.pointee!)!, cls) {
                 free(methodList)
                 return false
             }
+            mlist = mlist?.successor()
         }
         free(methodList)
         return true
