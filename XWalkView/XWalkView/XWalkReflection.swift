@@ -134,6 +134,7 @@ open class XWalkReflection : NSObject {
                 start = name.startIndex
                 end = name.characters.index(start, offsetBy: 4)
             } else {
+                mlist = mlist?.successor()
                 continue
             }
             if !callback(name[start..<end], type, (mlist?.pointee!)!, cls) {
